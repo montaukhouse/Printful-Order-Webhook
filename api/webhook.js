@@ -1,52 +1,84 @@
 // api/webhook.js
 //
-// This function listens for Stripe "checkout.session.completed" events,
-// figures out which Printful variant was purchased (based on the Size
-// and Color custom fields on the Stripe Payment Link), and creates the
+// Listens for Stripe "checkout.session.completed" events, figures out
+// which Printful product/variant was purchased, and creates the
 // matching order in Printful automatically.
 //
 // Required environment variables (set these in Vercel, never in this file):
 //   STRIPE_SECRET_KEY       - Stripe secret key (starts with sk_live_ or sk_test_)
-//   STRIPE_WEBHOOK_SECRET   - Signing secret from the Stripe webhook you'll create
+//   STRIPE_WEBHOOK_SECRET   - Signing secret from the Stripe webhook destination
 //   PRINTFUL_API_KEY        - Your Printful private token
 
 const Stripe = require('stripe');
 
-// Vercel needs the raw request body (not JSON-parsed) to verify the
-// Stripe signature, so we turn off Vercel's automatic body parsing.
 export const config = {
   api: {
     bodyParser: false,
   },
 };
 
-// ---------------------------------------------------------------------
-// VARIANT LOOKUP TABLE
-// Maps "Color|Size" (as they appear in your Stripe custom fields) to
-// the matching Printful sync_variant id for the Sushi & Soju Tee.
-// If you add more products later, add more entries here (or build a
-// second table and pick the right one based on which Stripe product
-// was purchased).
-// ---------------------------------------------------------------------
-const VARIANT_LOOKUP = {
-  'Black|S': 5395789463,
-  'Black|M': 5395789465,
-  'Black|L': 5395789467,
-  'Black|XL': 5395789469,
-  'Black|2XL': 5395789470,
-  'Pink|S': 5395789472,
-  'Pink|M': 5395789474,
-  'Pink|L': 5395789476,
-  'Pink|XL': 5395789477,
-  'Pink|2XL': 5395789479,
-  'Cream|S': 5395789481,
-  'Cream|M': 5395789483,
-  'Cream|L': 5395789484,
-  'Cream|XL': 5395789486,
-  'Cream|2XL': 5395789488,
-};
+const PRODUCT_CONFIG = [
+  {
+    match: 'sushi & soju tee',
+    needsSize: true,
+    needsColor: true,
+    variantsByColorSize: {
+      'Black|S': 5395789463,
+      'Black|M': 5395789465,
+      'Black|L': 5395789467,
+      'Black|XL': 5395789469,
+      'Black|2XL': 5395789470,
+      'Pink|S': 5395789472,
+      'Pink|M': 5395789474,
+      'Pink|L': 5395789476,
+      'Pink|XL': 5395789477,
+      'Pink|2XL': 5395789479,
+      'Cream|S': 5395789481,
+      'Cream|M': 5395789483,
+      'Cream|L': 5395789484,
+      'Cream|XL': 5395789486,
+      'Cream|2XL': 5395789488,
+    },
+  },
+  {
+    match: 'evil innocence tee - black',
+    needsSize: true,
+    variantsBySize: {
+      S: 5455690755,
+      M: 5455690756,
+      L: 5455690757,
+      XL: 5455690758,
+      '2XL': 5455690759,
+    },
+  },
+  {
+    match: 'evil innocence tee - white',
+    needsSize: true,
+    variantsBySize: {
+      S: 5455697250,
+      M: 5455697251,
+      L: 5455697252,
+      XL: 5455697253,
+      '2XL': 5455697254,
+    },
+  },
+  {
+    match: 'evil innocence cap',
+    needsSize: false,
+    variantId: 5455718274,
+  },
+  {
+    match: 'embri beanie',
+    needsSize: false,
+    variantId: 5455722008,
+  },
+  {
+    match: 'evil innocence tote bag',
+    needsSize: false,
+    variantId: 5455842578,
+  },
+];
 
-// Reads the raw request body as a Buffer (needed for Stripe's signature check)
 function readRawBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -56,7 +88,6 @@ function readRawBody(req) {
   });
 }
 
-// Pulls a custom field's value out of a Stripe Checkout Session by its key/label
 function getCustomFieldValue(session, fieldKey) {
   if (!session.custom_fields) return null;
   const field = session.custom_fields.find(
@@ -64,6 +95,13 @@ function getCustomFieldValue(session, fieldKey) {
   );
   if (!field) return null;
   return field.dropdown?.value || field.text?.value || field.numeric?.value || null;
+}
+
+function findProductConfig(lineItemNames) {
+  const lowerNames = lineItemNames.map((n) => n.toLowerCase());
+  return PRODUCT_CONFIG.find((config) =>
+    lowerNames.some((name) => name.includes(config.match))
+  );
 }
 
 module.exports = async (req, res) => {
@@ -98,24 +136,51 @@ module.exports = async (req, res) => {
 
   try {
     const fullSession = await stripe.checkout.sessions.retrieve(session.id, {
-      expand: ['customer_details'],
+      expand: ['customer_details', 'line_items'],
     });
 
-    const size = getCustomFieldValue(fullSession, 'size') || getCustomFieldValue(fullSession, 'Size');
-    const color = getCustomFieldValue(fullSession, 'color') || getCustomFieldValue(fullSession, 'Color');
+    const lineItemNames = (fullSession.line_items?.data || []).map(
+      (item) => item.description || ''
+    );
 
-    if (!size || !color) {
-      console.error('Missing size or color on session', session.id, { size, color });
-      res.status(200).json({ received: true, error: 'missing_size_or_color' });
+    const productConfig = findProductConfig(lineItemNames);
+
+    if (!productConfig) {
+      console.log('No matching Printful product for session', session.id, lineItemNames);
+      res.status(200).json({ received: true, skipped: true, reason: 'no_product_match' });
       return;
     }
 
-    const lookupKey = `${color}|${size}`;
-    const variantId = VARIANT_LOOKUP[lookupKey];
+    let variantId;
+
+    if (productConfig.needsColor) {
+      const size = getCustomFieldValue(fullSession, 'size') || getCustomFieldValue(fullSession, 'Size');
+      const color = getCustomFieldValue(fullSession, 'color') || getCustomFieldValue(fullSession, 'Color');
+
+      if (!size || !color) {
+        console.error('Missing size or color on session', session.id, { size, color });
+        res.status(200).json({ received: true, error: 'missing_size_or_color' });
+        return;
+      }
+
+      variantId = productConfig.variantsByColorSize[`${color}|${size}`];
+    } else if (productConfig.needsSize) {
+      const size = getCustomFieldValue(fullSession, 'size') || getCustomFieldValue(fullSession, 'Size');
+
+      if (!size) {
+        console.error('Missing size on session', session.id);
+        res.status(200).json({ received: true, error: 'missing_size' });
+        return;
+      }
+
+      variantId = productConfig.variantsBySize[size];
+    } else {
+      variantId = productConfig.variantId;
+    }
 
     if (!variantId) {
-      console.error('No matching Printful variant for', lookupKey);
-      res.status(200).json({ received: true, error: 'no_variant_match', lookupKey });
+      console.error('No matching Printful variant found for session', session.id);
+      res.status(200).json({ received: true, error: 'no_variant_match' });
       return;
     }
 
