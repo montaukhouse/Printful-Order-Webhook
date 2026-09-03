@@ -160,7 +160,12 @@ module.exports = async (req, res) => {
       if (!size || !color) {
         console.error('Missing size or color on session', session.id, { size, color });
         console.error('Raw custom_fields:', JSON.stringify(fullSession.custom_fields));
-        res.status(200).json({ received: true, error: 'missing_size_or_color', raw_custom_fields: fullSession.custom_fields });
+        res.status(200).json({
+          received: true,
+          error: 'missing_size_or_color',
+          raw_custom_fields: fullSession.custom_fields ?? 'UNDEFINED_OR_NULL',
+          session_top_level_keys: Object.keys(fullSession),
+        });
         return;
       }
 
@@ -182,7 +187,12 @@ module.exports = async (req, res) => {
     if (!variantId) {
       console.error('No matching Printful variant found for session', session.id);
       console.error('Raw custom_fields:', JSON.stringify(fullSession.custom_fields));
-      res.status(200).json({ received: true, error: 'no_variant_match', raw_custom_fields: fullSession.custom_fields });
+      res.status(200).json({
+        received: true,
+        error: 'no_variant_match',
+        raw_custom_fields: fullSession.custom_fields ?? 'UNDEFINED_OR_NULL',
+        session_top_level_keys: Object.keys(fullSession),
+      });
       return;
     }
 
