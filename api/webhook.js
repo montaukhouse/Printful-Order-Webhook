@@ -94,7 +94,15 @@ function getCustomFieldValue(session, fieldKey) {
     (f) => f.key === fieldKey || f.label?.custom === fieldKey
   );
   if (!field) return null;
-  return field.dropdown?.value || field.text?.value || field.numeric?.value || null;
+
+  if (field.dropdown) {
+    const matchedOption = field.dropdown.options?.find(
+      (o) => o.value === field.dropdown.value
+    );
+    return matchedOption?.label || field.dropdown.value || null;
+  }
+
+  return field.text?.value || field.numeric?.value || null;
 }
 
 function findProductConfig(lineItemNames) {
