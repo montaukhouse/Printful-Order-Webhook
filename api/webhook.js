@@ -9,8 +9,16 @@
 //   STRIPE_SECRET_KEY       - Stripe secret key (starts with sk_live_ or sk_test_)
 //   STRIPE_WEBHOOK_SECRET   - Signing secret from the Stripe webhook destination
 //   PRINTFUL_API_KEY        - Your Printful private token
+//
+// Album purchases (digital) don't go to Printful. Instead the buyer gets a
+// confirmation email with a personal link that unlocks the album on any browser.
+//   BREVO_API_KEY           - Brevo API key (already set for subscribe.js)
+//   UNLOCK_SECRET           - Long random string; must match the Embri-Web-App project
+//   ALBUM_EMAIL_SENDER      - Verified Brevo sender, e.g. hello@embriofficial.com
+//   SITE_URL                - Optional, defaults to https://embriofficial.com
 
 const Stripe = require('stripe');
+const crypto = require('crypto');
 
 export const config = {
   api: {
@@ -106,6 +114,46 @@ function getCustomFieldValue(session, fieldKey) {
   return field.text?.value || field.numeric?.value || null;
 }
 
+// ---- Album unlock email ----
+function b64url(buf) {
+  return Buffer.from(buf).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+function makeUnlockToken(email) {
+  const e = email.trim().toLowerCase();
+  const sig = crypto.createHmac('sha256', process.env.UNLOCK_SECRET).update(e).digest();
+  return `${b64url(e)}.${b64url(sig)}`;
+}
+function isAlbumPurchase(lineItemNames) {
+  return lineItemNames.some((n) => {
+    const name = n.toLowerCase().trim();
+    return name.includes('album') || name === 'evil innocence';
+  });
+}
+async function sendAlbumEmail(email, name) {
+  const site = process.env.SITE_URL || 'https://embriofficial.com';
+  const link = `${site}/?unlock=${encodeURIComponent(makeUnlockToken(email))}#listen`;
+  const first = (name || '').split(' ')[0];
+  const r = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: { 'api-key': process.env.BREVO_API_KEY, 'content-type': 'application/json', accept: 'application/json' },
+    body: JSON.stringify({
+      sender: { name: 'Embri', email: process.env.ALBUM_EMAIL_SENDER },
+      to: [{ email, name: name || undefined }],
+      subject: 'Your Evil Innocence album is unlocked 🖤',
+      htmlContent: `
+        <div style="font-family:Arial,sans-serif;max-width:480px;margin:auto;padding:24px;color:#111">
+          <h2 style="margin:0 0 12px">Thank you${first ? ', ' + first : ''} 🖤</h2>
+          <p>Your purchase of <b>Evil Innocence</b> is confirmed. All 12 tracks are yours to stream.</p>
+          <p>Use the button below to listen on any phone, tablet, or computer. It's your personal link, so save this email.</p>
+          <p style="margin:24px 0"><a href="${link}" style="background:#111;color:#fff;padding:12px 20px;border-radius:6px;text-decoration:none">Listen to the album</a></p>
+          <p style="font-size:13px;color:#666">Questions? Reply to hello@embriofficial.com.</p>
+          <p style="font-size:13px;color:#666">— Embri</p>
+        </div>`,
+    }),
+  });
+  if (!r.ok) throw new Error(`Brevo ${r.status}: ${await r.text()}`);
+}
+
 function findProductConfig(lineItemNames) {
   const lowerNames = lineItemNames.map((n) => n.toLowerCase());
   return PRODUCT_CONFIG.find((config) =>
@@ -151,6 +199,19 @@ module.exports = async (req, res) => {
     const lineItemNames = (fullSession.line_items?.data || []).map(
       (item) => item.description || ''
     );
+
+    if (isAlbumPurchase(lineItemNames)) {
+      const email = fullSession.customer_details?.email;
+      if (!email) {
+        console.error('Album purchase with no email on session', session.id);
+        res.status(200).json({ received: true, error: 'album_missing_email' });
+        return;
+      }
+      await sendAlbumEmail(email, fullSession.customer_details?.name);
+      console.log('Album unlock email sent for session', session.id);
+      res.status(200).json({ received: true, album_email_sent: true });
+      return;
+    }
 
     const productConfig = findProductConfig(lineItemNames);
 
