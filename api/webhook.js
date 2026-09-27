@@ -86,6 +86,12 @@ const PRODUCT_CONFIG = [
     needsSize: false,
     variantId: 5455842578,
   },
+  {
+    // Printful "External ID" of the 18x24 variant (shown as #6ab964c9269b27 in Printful)
+    match: 'embri poster 18x24',
+    needsSize: false,
+    externalVariantId: '6ab964c9269b27',
+  },
 ];
 
 function readRawBody(req) {
@@ -123,6 +129,12 @@ function makeUnlockToken(email) {
   const sig = crypto.createHmac('sha256', process.env.UNLOCK_SECRET).update(e).digest();
   return `${b64url(e)}.${b64url(sig)}`;
 }
+// Same personal share code the site uses (api/_lib.js shareCode)
+function shareCode(email) {
+  const e = email.trim().toLowerCase();
+  const sig = crypto.createHmac('sha256', process.env.UNLOCK_SECRET).update('share:' + e).digest();
+  return b64url(sig).replace(/[-_]/g, '').slice(0, 8).toLowerCase();
+}
 function isAlbumPurchase(lineItemNames) {
   return lineItemNames.some((n) => {
     const name = n.toLowerCase().trim();
@@ -134,6 +146,7 @@ async function sendAlbumEmail(email, name) {
   const link = `${site}/?unlock=${encodeURIComponent(makeUnlockToken(email))}#listen`;
   const appLink = `${site}/?unlock=${encodeURIComponent(makeUnlockToken(email))}&install=1#listen`;
   const first = (name || '').split(' ')[0];
+  const shareLink = `${site}/?s=${shareCode(email)}`;
   const r = await fetch('https://api.brevo.com/v3/smtp/email', {
     method: 'POST',
     headers: { 'api-key': process.env.BREVO_API_KEY, 'content-type': 'application/json', accept: 'application/json' },
@@ -147,6 +160,15 @@ async function sendAlbumEmail(email, name) {
           <p>Your purchase of <b>Evil Innocence</b> is confirmed. All 12 tracks are yours to stream.</p>
           <p>Tap the button below to open all 12 tracks and keep them on your phone with the Embri app, even offline. It's your personal link, so save this email.</p>
           <p style="margin:24px 0"><a href="${appLink}" style="display:inline-block;background:#1f8f4e;color:#fff;padding:14px 26px;border-radius:6px;text-decoration:none;font-weight:bold;letter-spacing:1px">Download album</a></p>
+          <div style="border:1px solid #e5e1d8;padding:18px;margin:28px 0">
+            <p style="margin:0 0 10px;font-size:16px"><b>🖤 Share Evil Innocence, earn rewards</b></p>
+            <p style="margin:0 0 6px">Share with 1 friend → an exclusive bonus voice track</p>
+            <p style="margin:0 0 6px">Share with 3 friends → $3 off merch</p>
+            <p style="margin:0 0 14px">2 friends buy through your link → a free Embri goodie bag, mailed to you</p>
+            <p style="margin:0 0 6px;font-size:13px;color:#666">Your personal share link (press and hold to copy):</p>
+            <p style="margin:0;font-size:15px"><a href="${shareLink}" style="color:#d7263d">${shareLink.replace('https://', '')}</a></p>
+            <p style="margin:12px 0 0;font-size:13px;color:#666">We'll email you when you unlock a reward.</p>
+          </div>
           <p style="font-size:13px;color:#666">Questions? Reply to hello@embriofficial.com.</p>
           <p style="font-size:13px;color:#666">— Embri</p>
         </div>`,
@@ -252,7 +274,7 @@ module.exports = async (req, res) => {
 
       variantId = productConfig.variantsBySize[size];
     } else {
-      variantId = productConfig.variantId;
+      variantId = productConfig.variantId || productConfig.externalVariantId;
     }
 
     if (!variantId) {
@@ -288,10 +310,9 @@ module.exports = async (req, res) => {
         email: fullSession.customer_details?.email,
       },
       items: [
-        {
-          sync_variant_id: variantId,
-          quantity: 1,
-        },
+        productConfig.externalVariantId
+          ? { external_variant_id: productConfig.externalVariantId, quantity: 1 }
+          : { sync_variant_id: variantId, quantity: 1 },
       ],
     };
 
