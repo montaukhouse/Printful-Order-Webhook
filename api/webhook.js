@@ -146,6 +146,7 @@ async function sendAlbumEmail(email, name) {
           <p>Your purchase of <b>Evil Innocence</b> is confirmed. All 12 tracks are yours to stream.</p>
           <p>Use the button below to listen on any phone, tablet, or computer. It's your personal link, so save this email.</p>
           <p style="margin:24px 0"><a href="${link}" style="background:#111;color:#fff;padding:12px 20px;border-radius:6px;text-decoration:none">Listen to the album</a></p>
+          <p style="font-size:14px;line-height:1.5;background:#f6f3ee;padding:12px 14px;border-radius:6px">📱 <b>Get the Embri app:</b> after the album opens, tap <b>⋯</b> next to any song, then <b>Add Embri app to Home Screen</b>. The app opens already unlocked and saves the album to play offline.</p>
           <p style="font-size:13px;color:#666">Questions? Reply to hello@embriofficial.com.</p>
           <p style="font-size:13px;color:#666">— Embri</p>
         </div>`,
