@@ -132,6 +132,7 @@ function isAlbumPurchase(lineItemNames) {
 async function sendAlbumEmail(email, name) {
   const site = process.env.SITE_URL || 'https://embriofficial.com';
   const link = `${site}/?unlock=${encodeURIComponent(makeUnlockToken(email))}#listen`;
+  const appLink = `${site}/?unlock=${encodeURIComponent(makeUnlockToken(email))}&install=1#listen`;
   const first = (name || '').split(' ')[0];
   const r = await fetch('https://api.brevo.com/v3/smtp/email', {
     method: 'POST',
@@ -146,7 +147,8 @@ async function sendAlbumEmail(email, name) {
           <p>Your purchase of <b>Evil Innocence</b> is confirmed. All 12 tracks are yours to stream.</p>
           <p>Use the button below to listen on any phone, tablet, or computer. It's your personal link, so save this email.</p>
           <p style="margin:24px 0"><a href="${link}" style="background:#111;color:#fff;padding:12px 20px;border-radius:6px;text-decoration:none">Listen to the album</a></p>
-          <p style="font-size:14px;line-height:1.5;background:#f6f3ee;padding:12px 14px;border-radius:6px">📱 <b>Get the Embri app:</b> after the album opens, tap <b>⋯</b> next to any song, then <b>Add Embri app to Home Screen</b>. The app opens already unlocked and saves the album to play offline.</p>
+          <p style="margin:0 0 8px"><a href="${appLink}" style="display:inline-block;background:#1f8f4e;color:#fff;padding:12px 20px;border-radius:6px;text-decoration:none">📱 Get the Embri app</a></p>
+          <p style="font-size:13px;color:#666;margin:0 0 20px">Keep the album on your phone like an app. It opens already unlocked and plays offline.</p>
           <p style="font-size:13px;color:#666">Questions? Reply to hello@embriofficial.com.</p>
           <p style="font-size:13px;color:#666">— Embri</p>
         </div>`,
